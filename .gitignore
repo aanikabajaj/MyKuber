@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+*.db
+*.sqlite3
+backend/iaare.db
+
+# Node
+node_modules/
+dist/
+dist-ssr/
+.vite/
+
+# Env
+.env
+.env.local
+backend/.env
+frontend/.env
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.log
