@@ -1,0 +1,63 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-postgres
+  namespace: default
+  labels:
+    app: ai-postgres
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ai-postgres
+  template:
+    metadata:
+      labels:
+        app: ai-postgres
+    spec:
+      containers:
+        - name: ai-postgres
+          image: postgres:16-alpine
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              value: "ai_user"
+            - name: POSTGRES_DB
+              value: "ai_db"
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ai-secrets
+                  key: AI_DB_PASSWORD
+                  optional: true
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: postgres-data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ai-postgres-svc
+  namespace: default
+  labels:
+    app: ai-postgres
+spec:
+  selector:
+    app: ai-postgres
+  ports:
+    - name: postgres
+      protocol: TCP
+      port: 5432
+      targetPort: 5432
+  type: ClusterIP

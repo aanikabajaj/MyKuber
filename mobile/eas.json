@@ -23,7 +23,7 @@
       "autoIncrement": true,
       "android": { "buildType": "app-bundle" },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://REPLACE-WITH-YOUR-BACKEND-URL"
+        "EXPO_PUBLIC_API_URL": "https://iaare-backend.onrender.com"
       }
     }
   },

@@ -21,6 +21,10 @@ dist-ssr/
 backend/.env
 frontend/.env
 
+# Too large for GitHub's 100MB file limit — RAG ingestion just skips it.
+ai/rag/knowledge_base/Taxation (CBDT & Income Tax)/Income-tax Act, 1961.pdf
+ai/ai_db.sqlite
+
 # Editor / OS
 .vscode/
 .idea/
