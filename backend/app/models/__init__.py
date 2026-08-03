@@ -6,6 +6,7 @@ from app.models.auth_session import AuthSession
 from app.models.login_attempt import LoginAttempt
 from app.models.audit import AuditLog
 from app.models.webauthn import WebAuthnCredential, PendingChallenge
+from app.models.transaction import Transaction
 
 __all__ = [
     "User",
@@ -16,4 +17,5 @@ __all__ = [
     "AuditLog",
     "WebAuthnCredential",
     "PendingChallenge",
+    "Transaction",
 ]

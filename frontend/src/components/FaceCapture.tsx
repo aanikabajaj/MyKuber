@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Camera, ScanFace, VideoOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { computeEmbedding, startCamera, stopCamera } from "@/lib/faceEmbedding";
+import { captureAveragedEmbedding, startCamera, stopCamera } from "@/lib/faceEmbedding";
 
 export function FaceCapture({
   onCapture,
@@ -16,6 +16,8 @@ export function FaceCapture({
   const streamRef = useRef<MediaStream | null>(null);
   const [active, setActive] = useState(false);
   const [error, setError] = useState<string>("");
+  const [capturing, setCapturing] = useState(false);
+  const [progress, setProgress] = useState(0);
 
   async function begin() {
     setError("");
@@ -35,11 +37,21 @@ export function FaceCapture({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  function capture() {
-    if (!videoRef.current) return;
-    const emb = computeEmbedding(videoRef.current);
-    if (emb.length) onCapture(emb);
+  async function capture() {
+    if (!videoRef.current || capturing) return;
+    setCapturing(true);
+    setProgress(0);
+    try {
+      // Average ~10 frames over ~1s so blinking / small movements don't matter.
+      const emb = await captureAveragedEmbedding(videoRef.current, 10, 100, setProgress);
+      if (emb.length) onCapture(emb);
+    } finally {
+      setCapturing(false);
+      setProgress(0);
+    }
   }
+
+  const pct = Math.round(progress * 100);
 
   return (
     <div className="flex flex-col items-center gap-4">
@@ -48,11 +60,26 @@ export function FaceCapture({
         {active && (
           <>
             <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-              <div className="h-40 w-32 rounded-[45%] border-2 border-dashed border-primary/70 animate-pulse-ring" />
+              <div
+                className={`h-44 w-36 rounded-[45%] border-2 border-dashed transition-colors ${
+                  capturing ? "border-risk-safe" : "border-primary/70 animate-pulse-ring"
+                }`}
+              />
             </div>
             <div className="absolute left-2 top-2 flex items-center gap-1.5 rounded-full bg-black/50 px-2 py-1 text-xs text-risk-safe">
               <span className="h-2 w-2 animate-pulse rounded-full bg-risk-safe" /> Live
             </div>
+            {capturing && (
+              <div className="absolute inset-x-0 bottom-0 bg-black/60 p-2">
+                <div className="mb-1 text-center text-xs text-white">Hold still… {pct}%</div>
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/20">
+                  <div
+                    className="h-full rounded-full bg-risk-safe transition-all"
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+              </div>
+            )}
           </>
         )}
         {!active && (
@@ -63,6 +90,9 @@ export function FaceCapture({
         )}
       </div>
 
+      <p className="max-w-sm text-center text-xs text-muted-foreground">
+        Center your face in the oval, face the light, and hold still while it scans.
+      </p>
       {error && <p className="max-w-sm text-center text-xs text-risk-high">{error}</p>}
 
       <div className="flex gap-2">
@@ -71,8 +101,8 @@ export function FaceCapture({
             <Camera className="h-4 w-4" /> Enable Camera
           </Button>
         ) : (
-          <Button onClick={capture} loading={busy} type="button">
-            <ScanFace className="h-4 w-4" /> {label}
+          <Button onClick={capture} loading={busy || capturing} type="button">
+            <ScanFace className="h-4 w-4" /> {capturing ? "Scanning…" : label}
           </Button>
         )}
       </div>

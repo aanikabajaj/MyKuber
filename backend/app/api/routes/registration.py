@@ -1,4 +1,12 @@
-"""Multi-step registration / enrollment flow."""
+"""Multi-step registration / enrollment flow.
+
+Registration stages (in order):
+  details → mobile → email → sim_verify → mpin → second_factor → complete
+
+SIM verify replaces the TOTP/QR authenticator step.
+The mobile app reads the SIM hardware number, sends an OTP to it,
+and the user confirms — binding the physical SIM card to this account.
+"""
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -10,8 +18,8 @@ from app.core.security import create_registration_token, hash_secret
 from app.core.utils import mask_email, mask_phone
 from app.models.user import User
 from app.schemas.auth import (
-    AuthenticatorSetupOut,
     FaceEnrollIn,
+    FaceImagesEnrollIn,
     Message,
     MpinIn,
     OtpSendOut,
@@ -19,6 +27,8 @@ from app.schemas.auth import (
     PasskeyVerifyIn,
     RegisterDetails,
     RegisterDetailsOut,
+    SimEnrollIn,
+    SimVerifyConfirmIn,
     StageOut,
 )
 from app.schemas.auth import DeviceInfo
@@ -28,10 +38,8 @@ from app.services import (
     face_service,
     geoip_service,
     otp_service,
-    totp_service,
     webauthn_service,
 )
-from app.services.totp_service import encrypt_secret
 
 router = APIRouter(prefix="/api/register", tags=["registration"])
 
@@ -128,38 +136,105 @@ def email_verify_otp(payload: OtpVerifyIn, user: User = Depends(get_registration
     if not ok:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, reason)
     user.email_verified = True
-    user.registration_stage = "authenticator"
+    # Advance to SIM verification (replaces the old TOTP QR authenticator step)
+    user.registration_stage = "sim_verify"
     db.commit()
     return StageOut(stage=user.registration_stage, complete=False)
 
 
 # --------------------------------------------------------------------------- #
-#  Step 4 — Google Authenticator (TOTP)
+#  Step 4 — SIM number verification (replaces TOTP / QR authenticator)
+#
+#  Flow:
+#    a) Mobile app reads the SIM mobile number via TelephonyManager (Android).
+#    b) An OTP is sent to that number via SMS.
+#    c) User enters the OTP — proves physical possession of the SIM.
+#    d) The SIM fingerprint (SHA-256 of carrier fields) is stored so the
+#       sim_check login factor activates on every subsequent login.
 # --------------------------------------------------------------------------- #
-@router.post("/authenticator/setup", response_model=AuthenticatorSetupOut)
-def authenticator_setup(user: User = Depends(get_registration_user), db: Session = Depends(get_db)):
-    secret = totp_service.generate_secret()
-    user.totp_secret_enc = encrypt_secret(secret)
-    db.commit()
-    account = f"{user.username}@psb"
-    return AuthenticatorSetupOut(
-        secret=secret,
-        otpauth_uri=totp_service.provisioning_uri(secret, account),
-        qr_data_uri=totp_service.qr_data_uri(secret, account),
+@router.post("/sim-verify/send-otp", response_model=OtpSendOut)
+def sim_verify_send_otp(
+    user: User = Depends(get_registration_user),
+    db: Session = Depends(get_db),
+):
+    """Send an OTP to the mobile number currently in the device SIM."""
+    if user.registration_stage not in ("sim_verify", "email"):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"Cannot send SIM OTP at stage '{user.registration_stage}'.",
+        )
+    result = otp_service.issue_otp(
+        db, channel="sms", purpose="sim_bind",
+        destination=user.mobile, user_id=user.id,
+    )
+    return OtpSendOut(
+        channel="sms",
+        destination_masked=mask_phone(user.mobile),
+        provider=result.provider,
+        dev_code=result.dev_code,
+        message=f"Verification code sent to {mask_phone(user.mobile)}",
     )
 
 
-@router.post("/authenticator/verify", response_model=StageOut)
-def authenticator_verify(payload: OtpVerifyIn, user: User = Depends(get_registration_user),
-                         db: Session = Depends(get_db)):
-    if not user.totp_secret_enc:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Authenticator not set up.")
-    if not totp_service.verify_token(user.totp_secret_enc, payload.code):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid authenticator code.")
-    user.totp_enabled = True
+@router.post("/sim-verify/confirm", response_model=StageOut)
+def sim_verify_confirm(
+    payload: SimVerifyConfirmIn,
+    request: Request,
+    user: User = Depends(get_registration_user),
+    db: Session = Depends(get_db),
+):
+    """Verify the OTP and bind the SIM fingerprint to the account."""
+    ok, reason = otp_service.verify_otp_code(
+        db, channel="sms", purpose="sim_bind",
+        code=payload.code, user_id=user.id,
+    )
+    if not ok:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, reason)
+
+    # Store fingerprint if the mobile app supplied one (Android only)
+    if payload.sim_fingerprint and len(payload.sim_fingerprint) == 64:
+        user.sim_fingerprint = payload.sim_fingerprint.strip().lower()
+        user.sim_enrolled    = True
+
     user.registration_stage = "mpin"
     db.commit()
+    audit_service.log_event(
+        db, event_type="sim_bound",
+        description=f"SIM number verified and bound for {user.username}",
+        severity="info", user_id=user.id,
+        ip_address=get_client_ip(request),
+    )
     return StageOut(stage=user.registration_stage, complete=False)
+
+
+# --------------------------------------------------------------------------- #
+#  SIM fingerprint enrollment (standalone — called from Settings)
+# --------------------------------------------------------------------------- #
+@router.post("/sim/enroll", response_model=Message)
+def enroll_sim_registration(
+    payload: SimEnrollIn,
+    request: Request,
+    user: User = Depends(get_registration_user),
+    db: Session = Depends(get_db),
+):
+    """Store the SHA-256 SIM fingerprint supplied by the mobile app.
+
+    Called during registration after mobile OTP, or later from Settings
+    to bind / update the device SIM. Raw SIM data is never transmitted —
+    only the hex hash.
+    """
+    user.sim_fingerprint = payload.sim_fingerprint.strip().lower()
+    user.sim_enrolled    = True
+    db.commit()
+    audit_service.log_event(
+        db,
+        event_type="sim_enrolled",
+        description=f"SIM fingerprint enrolled during registration for {user.username}",
+        severity="info",
+        user_id=user.id,
+        ip_address=get_client_ip(request),
+    )
+    return Message(message="SIM fingerprint enrolled successfully.")
 
 
 # --------------------------------------------------------------------------- #
@@ -180,14 +255,57 @@ def set_mpin(payload: MpinIn, user: User = Depends(get_registration_user),
 @router.post("/second-factor/face", response_model=StageOut)
 def enroll_face(payload: FaceEnrollIn, request: Request,
                 user: User = Depends(get_registration_user), db: Session = Depends(get_db)):
-    user.face_embedding_enc = face_service.encrypt_embedding(payload.embedding)
-    user.face_enabled = True
+    user.face_embedding_enc = face_service.encrypt_templates(payload.embeddings)
+    user.face_enabled  = True
     user.second_factor = "face"
     user.registration_stage = "complete"
     db.commit()
     audit_service.log_event(
         db, event_type="register_complete",
         description=f"Registration complete (face) for {user.username}",
+        user_id=user.id, ip_address=get_client_ip(request),
+    )
+    return StageOut(stage=user.registration_stage, complete=True)
+
+
+# --------------------------------------------------------------------------- #
+#  Step 6a-mobile — Face enrollment from camera images
+# --------------------------------------------------------------------------- #
+@router.post("/second-factor/face-images", response_model=StageOut)
+def enroll_face_images(payload: FaceImagesEnrollIn,
+                       request: Request,
+                       user: User = Depends(get_registration_user),
+                       db: Session = Depends(get_db)):
+    templates = face_service.embeddings_from_images(payload.images)
+    if not templates:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            "No face detected in the captured frames. Ensure your face is well-lit and centered, then retry.")
+    user.face_embedding_enc = face_service.encrypt_templates(templates)
+    user.face_enabled  = True
+    user.second_factor = "face"
+    user.registration_stage = "complete"
+    db.commit()
+    audit_service.log_event(
+        db, event_type="register_complete",
+        description=f"Registration complete (camera face, {len(templates)} angles) for {user.username}",
+        user_id=user.id, ip_address=get_client_ip(request),
+    )
+    return StageOut(stage=user.registration_stage, complete=True)
+
+
+# --------------------------------------------------------------------------- #
+#  Step 6c — Device biometric enrollment
+# --------------------------------------------------------------------------- #
+@router.post("/second-factor/biometric", response_model=StageOut)
+def enroll_biometric(request: Request, user: User = Depends(get_registration_user),
+                     db: Session = Depends(get_db)):
+    user.second_factor = "biometric"
+    user.face_enabled  = False
+    user.registration_stage = "complete"
+    db.commit()
+    audit_service.log_event(
+        db, event_type="register_complete",
+        description=f"Registration complete (device biometric) for {user.username}",
         user_id=user.id, ip_address=get_client_ip(request),
     )
     return StageOut(stage=user.registration_stage, complete=True)
@@ -208,7 +326,6 @@ def passkey_register_verify(payload: PasskeyVerifyIn, request: Request,
                             user: User = Depends(get_registration_user),
                             db: Session = Depends(get_db)):
     import json
-
     try:
         webauthn_service.finish_registration(
             db, user, handle=payload.handle,
@@ -216,7 +333,6 @@ def passkey_register_verify(payload: PasskeyVerifyIn, request: Request,
         )
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
-
     user.second_factor = "passkey"
     user.registration_stage = "complete"
     db.commit()
@@ -229,12 +345,12 @@ def passkey_register_verify(payload: PasskeyVerifyIn, request: Request,
 
 
 # --------------------------------------------------------------------------- #
-#  Device registration (called once at the end, from the browser)
+#  Device registration
 # --------------------------------------------------------------------------- #
 @router.post("/device", response_model=Message)
 def register_device(info: DeviceInfo, request: Request,
                     user: User = Depends(get_registration_user), db: Session = Depends(get_db)):
-    ip = get_client_ip(request)
+    ip  = get_client_ip(request)
     geo = geoip_service.lookup(ip)
     device_service.register_device(
         db, user_id=user.id, fingerprint=info.fingerprint,

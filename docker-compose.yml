@@ -1,4 +1,5 @@
 services:
+  # ── Existing IAARE services ─────────────────────────────────────────────────
   backend:
     build: ./backend
     container_name: iaare-backend
@@ -6,7 +7,7 @@ services:
       IAARE_DEMO_MODE: "true"
       IAARE_RP_ID: "localhost"
       IAARE_EXPECTED_ORIGIN: "http://localhost:5173"
-      IAARE_CORS_ORIGINS: "http://localhost:5173,http://127.0.0.1:5173"
+      IAARE_CORS_ORIGINS: "http://localhost:5173,http://127.0.0.1:5173,http://localhost:8081,http://localhost:19006,http://10.0.2.2:8000"
     ports:
       - "8000:8000"
     restart: unless-stopped
@@ -19,3 +20,170 @@ services:
     ports:
       - "5173:5173"
     restart: unless-stopped
+
+  # ── AI Gateway ───────────────────────────────────────────────────────────────
+  ai_gateway:
+    build:
+      context: .
+      dockerfile: ai/Dockerfile
+    container_name: ai-gateway
+    env_file:
+      - ai/.env.example
+    environment:
+      AI_DATABASE_URL: "postgresql+asyncpg://ai_user:${AI_DB_PASSWORD:-ai_password}@ai_postgres:5432/ai_db"
+      REDIS_URL: "redis://redis:6379/0"
+      QDRANT_URL: "http://qdrant:6333"
+      # Defaults to the self-hosted vllm service below. No GPU? Leave the
+      # `vllm` service stopped (it's behind the `gpu` profile) and instead
+      # set VLLM_BASE_URL / VLLM_API_KEY / VLLM_MODEL in a .env file next to
+      # this compose file to point at a hosted OpenAI-compatible provider
+      # (Together AI, Groq, Fireworks, OpenAI, etc).
+      VLLM_BASE_URL: "${VLLM_BASE_URL:-http://vllm:8000/v1}"
+      VLLM_API_KEY: "${VLLM_API_KEY:-EMPTY}"
+      VLLM_MODEL: "${VLLM_MODEL:-Qwen/Qwen3-8B}"
+      CELERY_BROKER_URL: "redis://redis:6379/1"
+      CELERY_RESULT_BACKEND: "redis://redis:6379/1"
+      MINIO_ENDPOINT: "minio:9000"
+      IAARE_SECRET_KEY: "${IAARE_SECRET_KEY:-iaare-dev-secret-key-change-in-production-0123456789}"
+      IAARE_DATABASE_URL: "sqlite:////app/iaare.db"
+    volumes:
+      - ./backend/iaare.db:/app/iaare.db:ro
+      - hf_cache:/root/.cache/huggingface
+    ports:
+      - "8001:8001"
+    depends_on:
+      - redis
+      - ai_postgres
+      - qdrant
+    restart: unless-stopped
+
+  # ── vLLM (Qwen3-8B, requires NVIDIA GPU) ────────────────────────────────────
+  # Optional — only needed if you're self-hosting the LLM. No GPU? Skip this
+  # entirely (it won't start by default) and point VLLM_BASE_URL above at a
+  # hosted OpenAI-compatible provider instead.
+  # Start explicitly with: docker compose --profile gpu up vllm
+  vllm:
+    image: vllm/vllm-openai:latest
+    container_name: vllm
+    profiles: ["gpu"]
+    runtime: nvidia
+    environment:
+      HUGGING_FACE_HUB_TOKEN: "${HF_TOKEN:-}"
+    command:
+      - "--model"
+      - "Qwen/Qwen3-8B"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8000"
+      - "--max-model-len"
+      - "8192"
+    ports:
+      - "8002:8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+
+  # ── Qdrant vector store ──────────────────────────────────────────────────────
+  qdrant:
+    image: qdrant/qdrant:v1.9.0
+    container_name: qdrant
+    volumes:
+      - qdrant_data:/qdrant/storage
+    ports:
+      - "6333:6333"
+    restart: unless-stopped
+
+  # ── Redis ─────────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
+  # ── AI PostgreSQL ─────────────────────────────────────────────────────────────
+  ai_postgres:
+    image: postgres:16-alpine
+    container_name: ai-postgres
+    environment:
+      POSTGRES_USER: ai_user
+      POSTGRES_PASSWORD: "${AI_DB_PASSWORD:-ai_password}"
+      POSTGRES_DB: ai_db
+    volumes:
+      - ai_postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+    restart: unless-stopped
+
+  # ── Celery worker (RAG ingestion) ─────────────────────────────────────────────
+  celery_worker:
+    build:
+      context: .
+      dockerfile: ai/Dockerfile
+    container_name: celery-worker
+    command:
+      ["celery", "-A", "ai.rag.ingestion.celery_app", "worker", "--loglevel=info"]
+    env_file:
+      - ai/.env.example
+    environment:
+      AI_DATABASE_URL: "postgresql+asyncpg://ai_user:${AI_DB_PASSWORD:-ai_password}@ai_postgres:5432/ai_db"
+      REDIS_URL: "redis://redis:6379/0"
+      CELERY_BROKER_URL: "redis://redis:6379/1"
+      CELERY_RESULT_BACKEND: "redis://redis:6379/1"
+      QDRANT_URL: "http://qdrant:6333"
+      MINIO_ENDPOINT: "minio:9000"
+      IAARE_SECRET_KEY: "${IAARE_SECRET_KEY:-iaare-dev-secret-key-change-in-production-0123456789}"
+      IAARE_DATABASE_URL: "sqlite:////app/iaare.db"
+    volumes:
+      - ./backend/iaare.db:/app/iaare.db:ro
+      - hf_cache:/root/.cache/huggingface
+    depends_on:
+      - redis
+      - ai_postgres
+      - qdrant
+      - minio
+    restart: unless-stopped
+
+  # ── MinIO (object storage for RAG documents) ─────────────────────────────────
+  minio:
+    image: minio/minio:latest
+    container_name: minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: "${MINIO_ACCESS_KEY:-minioadmin}"
+      MINIO_ROOT_PASSWORD: "${MINIO_SECRET_KEY:-minioadmin}"
+    volumes:
+      - minio_data:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    restart: unless-stopped
+
+volumes:
+  qdrant_data:
+  redis_data:
+  ai_postgres_data:
+  minio_data:
+  hf_cache:
+
+# ── Mobile App (Expo — NOT a Docker service) ──────────────────────────────────
+# The React Native / Expo mobile app is not containerised. Run it natively:
+#
+#   cd mobile
+#   npx expo start
+#
+# For physical devices:
+#   1. Find your LAN IP: ipconfig (Windows) / ifconfig (Mac/Linux)
+#   2. Set EXPO_PUBLIC_API_URL=http://<LAN_IP>:8000 in mobile/.env
+#   3. Set EXPO_PUBLIC_AI_URL=http://<LAN_IP>:8001 in mobile/.env
+#   4. Scan the QR code with the Expo Go app
+# ─────────────────────────────────────────────────────────────────────────────

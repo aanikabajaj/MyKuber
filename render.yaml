@@ -1,0 +1,29 @@
+databases:
+  - name: iaare-db
+    plan: free
+    databaseName: iaare
+    user: iaare
+
+services:
+  - type: web
+    name: iaare-backend
+    runtime: docker
+    plan: free
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    healthCheckPath: /api/health
+    envVars:
+      - key: IAARE_SECRET_KEY
+        generateValue: true
+      - key: IAARE_DEMO_MODE
+        value: "true"
+      - key: IAARE_DATABASE_URL
+        fromDatabase:
+          name: iaare-db
+          property: connectionString
+      - key: IAARE_RP_ID
+        value: "iaare-backend.onrender.com"
+      - key: IAARE_EXPECTED_ORIGIN
+        value: "https://iaare-backend.onrender.com"
+      - key: IAARE_CORS_ORIGINS
+        value: "http://localhost:5173,http://127.0.0.1:5173,http://localhost:8081,http://127.0.0.1:8081,http://localhost:19006,http://127.0.0.1:19006,http://10.0.2.2:8000"

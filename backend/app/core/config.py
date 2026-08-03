@@ -45,8 +45,12 @@ class Settings(BaseSettings):
     RP_NAME: str = "IAARE - Punjab & Sind Bank"
     EXPECTED_ORIGIN: str = "http://localhost:5173"
 
-    # --- CORS ---
-    CORS_ORIGINS: str = "http://localhost:5173,http://127.0.0.1:5173"
+    # --- CORS (web app :5173, Expo web :8081/:19006) ---
+    CORS_ORIGINS: str = (
+        "http://localhost:5173,http://127.0.0.1:5173,"
+        "http://localhost:8081,http://127.0.0.1:8081,"
+        "http://localhost:19006,http://127.0.0.1:19006"
+    )
 
     # --- OTP ---
     OTP_LENGTH: int = 6
@@ -65,6 +69,10 @@ class Settings(BaseSettings):
     TWILIO_AUTH_TOKEN: str = ""
     TWILIO_FROM_NUMBER: str = ""
 
+    # --- SMS (Fast2SMS — India free tier, alternative to Twilio) ---
+    # Sign up at https://www.fast2sms.com → Dashboard → Dev API → API Key
+    FAST2SMS_API_KEY: str = ""
+
     # --- GeoIP ---
     GEOIP_ENABLED: bool = True
 
@@ -75,6 +83,14 @@ class Settings(BaseSettings):
     @property
     def cors_origins_list(self) -> List[str]:
         return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]
+
+    @property
+    def sqlalchemy_database_url(self) -> str:
+        """Normalize the legacy `postgres://` scheme some hosts (Render, Heroku)
+        still hand out — SQLAlchemy 1.4+ only recognizes `postgresql://`."""
+        if self.DATABASE_URL.startswith("postgres://"):
+            return "postgresql://" + self.DATABASE_URL[len("postgres://"):]
+        return self.DATABASE_URL
 
     @property
     def fernet_key(self) -> bytes:

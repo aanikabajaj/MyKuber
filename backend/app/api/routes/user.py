@@ -17,10 +17,12 @@ from app.models.webauthn import WebAuthnCredential
 from app.schemas.auth import Message, PasskeyVerifyIn
 from app.schemas.user import (
     DeviceOut,
+    FaceImagesReenrollIn,
     FaceReenrollIn,
     LoginHistoryOut,
     MpinResetIn,
     PasskeyOut,
+    SecurityPrefsIn,
     UserOut,
 )
 from app.services import face_service, webauthn_service
@@ -87,11 +89,52 @@ def reset_mpin(payload: MpinResetIn, user: User = Depends(get_current_user), db:
 
 @router.post("/face/re-enroll", response_model=Message)
 def reenroll_face(payload: FaceReenrollIn, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    user.face_embedding_enc = face_service.encrypt_embedding(payload.embedding)
+    user.face_embedding_enc = face_service.encrypt_templates(payload.embeddings)
     user.face_enabled = True
     user.second_factor = "face"
     db.commit()
     return Message(message="Face re-enrolled successfully.")
+
+
+@router.post("/face/re-enroll-images", response_model=Message)
+def reenroll_face_images(payload: FaceImagesReenrollIn, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    templates = face_service.embeddings_from_images(payload.images)
+    if not templates:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            "No face detected in the captured frames. Ensure your face is well-lit and centered, then retry.")
+    user.face_embedding_enc = face_service.encrypt_templates(templates)
+    user.face_enabled = True
+    user.second_factor = "face"
+    db.commit()
+    return Message(message="Face re-enrolled successfully.")
+
+
+@router.get("/security-prefs")
+def get_security_prefs(user: User = Depends(get_current_user)):
+    return {
+        "second_factor": user.second_factor,
+        "face_enabled": user.face_enabled,
+        "face_login_enabled": user.face_login_enabled,
+        "face_txn_enabled": user.face_txn_enabled,
+        "txn_face_threshold": user.txn_face_threshold,
+        "preferred_language": user.preferred_language,
+    }
+
+
+@router.put("/security-prefs", response_model=Message)
+def update_security_prefs(payload: SecurityPrefsIn, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if payload.face_login_enabled is not None:
+        user.face_login_enabled = payload.face_login_enabled
+    if payload.face_txn_enabled is not None:
+        user.face_txn_enabled = payload.face_txn_enabled
+    if payload.txn_face_threshold is not None:
+        if payload.txn_face_threshold < 0:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Threshold cannot be negative.")
+        user.txn_face_threshold = payload.txn_face_threshold
+    if payload.preferred_language is not None:
+        user.preferred_language = payload.preferred_language[:8]
+    db.commit()
+    return Message(message="Security preferences updated.")
 
 
 @router.post("/passkey/add/options")

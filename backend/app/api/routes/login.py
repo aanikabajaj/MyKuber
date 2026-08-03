@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_client_ip
+from app.api.deps import get_client_ip, get_current_user
 from app.core.database import get_db
 from app.core.rate_limit import allow as rate_allow
 from app.core.security import verify_secret
@@ -17,11 +17,14 @@ from app.models.user import User
 from app.schemas.auth import (
     LoginPasswordIn,
     LoginSessionOut,
+    SimEnrollIn,
     StepFaceIn,
+    StepFaceImageIn,
     StepMpinIn,
     StepOtpVerifyIn,
     StepPasskeyOptionsIn,
     StepPasskeyVerifyIn,
+    StepSimVerifyIn,
     StepTotpIn,
 )
 from app.services import (
@@ -89,8 +92,9 @@ def login_password(payload: LoginPasswordIn, request: Request, db: Session = Dep
     ua = request.headers.get("user-agent", "")
     user = db.query(User).filter(User.username == payload.username).first()
 
-    # Geo / simulation context (needed even for failed attempts logging)
-    base_geo = geoip_service.lookup(payload.simulate.ip if (payload.simulate and payload.simulate.ip) else ip)
+    base_geo = geoip_service.lookup(
+        payload.simulate.ip if (payload.simulate and payload.simulate.ip) else ip
+    )
     geo = login_service.build_geo(base_geo, payload.simulate)
 
     if user is None or not verify_secret(payload.password, user.password_hash):
@@ -113,14 +117,12 @@ def login_password(payload: LoginPasswordIn, request: Request, db: Session = Dep
     if not user.registration_complete:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Registration is incomplete for this account.")
 
-    # --- gather risk signals ---
     from app.services import device_service
-
     fp = payload.device.fingerprint
-    known_device = device_service.find_device(db, user.id, fp) is not None
+    known_device  = device_service.find_device(db, user.id, fp) is not None
     trusted_device = device_service.is_trusted(db, user.id, fp)
     if payload.simulate and payload.simulate.new_device:
-        known_device = False
+        known_device  = False
         trusted_device = False
 
     since = _utcnow() - timedelta(minutes=60)
@@ -138,16 +140,24 @@ def login_password(payload: LoginPasswordIn, request: Request, db: Session = Dep
         known_device_exists=known_device, failed_attempts=failed_attempts,
     )
 
-    # --- optional explicit demo override ---
+    # Demo band override
     if payload.simulate and payload.simulate.enabled and payload.simulate.force_band:
         fb = payload.simulate.force_band.upper()
         if fb in BAND_STEPS:
             from app.services.risk_engine import Factor
-            risk.band = fb
-            risk.score = _BAND_MID[fb]
-            risk.decision = BAND_DECISION[fb]
+            risk.band          = fb
+            risk.score         = _BAND_MID[fb]
+            risk.decision      = BAND_DECISION[fb]
             risk.required_steps = list(BAND_STEPS[fb])
             risk.factors.append(Factor("demo_override", 0, f"Demo scenario forced to {fb}"))
+
+    # Prune face step if disabled by user preference
+    if user.second_factor == "face" and not user.face_login_enabled:
+        risk.required_steps = [s for s in risk.required_steps if s != "second_factor"]
+
+    # Prune sim_check if user hasn't enrolled a SIM yet (iOS / Wi-Fi-only)
+    if not getattr(user, "sim_enrolled", False):
+        risk.required_steps = [s for s in risk.required_steps if s != "sim_check"]
 
     session = login_service.create_session(
         db, user, risk, device_info=payload.device.model_dump(), ip=ip, user_agent=ua,
@@ -170,6 +180,87 @@ def login_password(payload: LoginPasswordIn, request: Request, db: Session = Dep
     if risk.band == "CRITICAL":
         out["message"] = "Login blocked due to CRITICAL risk. Your bank has been notified."
     return out
+
+
+# --------------------------------------------------------------------------- #
+#  Step — SIM binding check
+# --------------------------------------------------------------------------- #
+@router.post("/step/sim-verify", response_model=LoginSessionOut)
+def step_sim_verify(payload: StepSimVerifyIn, db: Session = Depends(get_db)):
+    """Verify the physical SIM in the device matches the enrolled fingerprint.
+
+    The mobile app reads SIM hardware fields via IaareSimModule (Android only),
+    SHA-256 hashes them, and sends the hex here. We compare it against the
+    hash stored during registration.
+
+    Demo accounts (is_demo=True) auto-pass this step so presentations work
+    on any device without a specific SIM card.
+
+    A mismatch immediately blocks the session and logs a security event.
+    """
+    session, user = _load_pending(db, payload.session_id)
+    _expect_step(session, "sim_check")
+
+    stored_fp = getattr(user, "sim_fingerprint", None)
+
+    # No SIM enrolled — skip (shouldn't reach here if pruned at session creation)
+    if not stored_fp:
+        login_service.advance(db, session, "sim_check")
+        return _maybe_finalize(db, session, user)
+
+    # Demo accounts always pass
+    from app.core.config import settings
+    if settings.DEMO_MODE and user.is_demo:
+        login_service.advance(db, session, "sim_check")
+        return _maybe_finalize(db, session, user)
+
+    # Real check — fingerprints must match exactly
+    if payload.sim_fingerprint.strip().lower() != stored_fp.strip().lower():
+        session.status = "blocked"
+        user.failed_login_count = (user.failed_login_count or 0) + 1
+        db.commit()
+        audit_service.log_event(
+            db,
+            event_type="sim_mismatch",
+            description=f"SIM fingerprint mismatch for {user.username} — session blocked",
+            severity="warning",
+            user_id=user.id,
+        )
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "SIM card mismatch. This login attempt has been blocked and logged. "
+            "Use the device and SIM registered with your account.",
+        )
+
+    login_service.advance(db, session, "sim_check")
+    return _maybe_finalize(db, session, user)
+
+
+# --------------------------------------------------------------------------- #
+#  SIM enrolment — authenticated endpoint (from Settings / post-login)
+# --------------------------------------------------------------------------- #
+@router.post("/sim/enroll")
+def enroll_sim_authenticated(
+    payload: SimEnrollIn,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Bind or update the SIM fingerprint for the currently logged-in user.
+
+    Called from the mobile Settings screen when a user wants to enable
+    SIM binding after initial registration, or re-bind after a SIM swap.
+    """
+    current_user.sim_fingerprint = payload.sim_fingerprint.strip().lower()
+    current_user.sim_enrolled    = True
+    db.commit()
+    audit_service.log_event(
+        db,
+        event_type="sim_enrolled",
+        description=f"SIM fingerprint enrolled/updated for {current_user.username}",
+        severity="info",
+        user_id=current_user.id,
+    )
+    return {"status": "ok", "message": "SIM fingerprint enrolled successfully."}
 
 
 # --------------------------------------------------------------------------- #
@@ -196,8 +287,6 @@ def step_face(payload: StepFaceIn, db: Session = Depends(get_db)):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Face is not this account's second factor.")
     from app.core.config import settings
     if settings.DEMO_MODE and user.is_demo:
-        # Seeded demo account: accept the live capture so the flow can be shown
-        # without the originally-enrolled face on the presentation machine.
         login_service.advance(db, session, "second_factor")
         return _maybe_finalize(db, session, user)
     ok, sim = face_service.compare(user.face_embedding_enc, payload.embedding)
@@ -208,8 +297,39 @@ def step_face(payload: StepFaceIn, db: Session = Depends(get_db)):
 
 
 # --------------------------------------------------------------------------- #
-#  Step — second factor: PASSKEY
+#  Step — second factor: biometric / passkey
 # --------------------------------------------------------------------------- #
+@router.post("/step/biometric", response_model=LoginSessionOut)
+def step_biometric(payload: StepPasskeyOptionsIn, db: Session = Depends(get_db)):
+    session, user = _load_pending(db, payload.session_id)
+    _expect_step(session, "second_factor")
+    if user.second_factor != "biometric":
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Biometric is not this account's second factor.")
+    login_service.advance(db, session, "second_factor")
+    return _maybe_finalize(db, session, user)
+
+
+@router.post("/step/face-image", response_model=LoginSessionOut)
+def step_face_image(payload: StepFaceImageIn, db: Session = Depends(get_db)):
+    session, user = _load_pending(db, payload.session_id)
+    _expect_step(session, "second_factor")
+    if user.second_factor != "face":
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Face is not this account's second factor.")
+    from app.core.config import settings
+    if settings.DEMO_MODE and user.is_demo:
+        login_service.advance(db, session, "second_factor")
+        return _maybe_finalize(db, session, user)
+    candidate = face_service.embedding_from_image_b64(payload.image)
+    if not candidate:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            "No clear face detected. Center your face in the oval, ensure good lighting, and try again.")
+    ok, sim = face_service.compare(user.face_embedding_enc, candidate)
+    if not ok:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Face not recognised (similarity {sim}).")
+    login_service.advance(db, session, "second_factor")
+    return _maybe_finalize(db, session, user)
+
+
 @router.post("/step/passkey/options")
 def step_passkey_options(payload: StepPasskeyOptionsIn, db: Session = Depends(get_db)):
     session, user = _load_pending(db, payload.session_id)
@@ -315,7 +435,7 @@ def step_totp(payload: StepTotpIn, db: Session = Depends(get_db)):
 
 
 # --------------------------------------------------------------------------- #
-#  Session state (resume / refresh)
+#  Session state (resume / deep-link callback)
 # --------------------------------------------------------------------------- #
 @router.get("/session/{session_id}", response_model=LoginSessionOut)
 def get_login_session(session_id: str, db: Session = Depends(get_db)):

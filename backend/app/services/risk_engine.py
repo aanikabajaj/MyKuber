@@ -1,9 +1,15 @@
 """Adaptive Risk Assessment Engine.
 
 Produces a 0-100 risk score from device, network, geography and behavioural
-signals, together with a fully transparent per-factor breakdown (so the UI can
-explain *why* a login was scored the way it was) and the ordered list of
-authentication factors the score demands.
+signals, together with a fully transparent per-factor breakdown and the
+ordered list of authentication factors the score demands.
+
+SIM check placement
+-------------------
+sim_check sits between second_factor and email_otp in MEDIUM/HIGH bands.
+It is silently removed from required_steps at session-creation time if the
+user has not enrolled a SIM (sim_enrolled=False) — so iOS users and
+Wi-Fi-only devices are never blocked.
 """
 from __future__ import annotations
 
@@ -26,18 +32,20 @@ BAND_THRESHOLDS = [
     (100, "CRITICAL"),
 ]
 
-# --- Auth factor chain per band (password already verified upstream) -------- #
+# --- Auth factor chain per band --------------------------------------------- #
+# sim_check is listed in MEDIUM and HIGH.  login.py prunes it if the user
+# hasn't enrolled a SIM yet so un-enrolled users are never blocked.
 BAND_STEPS = {
-    "SAFE": ["mpin", "second_factor"],
-    "MEDIUM": ["mpin", "second_factor", "email_otp"],
-    "HIGH": ["mpin", "second_factor", "email_otp", "sms_otp", "totp"],
+    "SAFE":     ["mpin", "second_factor"],
+    "MEDIUM":   ["mpin", "second_factor", "sim_check", "email_otp"],
+    "HIGH":     ["mpin", "second_factor", "sim_check", "email_otp", "sms_otp", "totp"],
     "CRITICAL": [],  # blocked
 }
 
 BAND_DECISION = {
-    "SAFE": "ALLOW",
-    "MEDIUM": "STEP_UP",
-    "HIGH": "STEP_UP",
+    "SAFE":     "ALLOW",
+    "MEDIUM":   "STEP_UP",
+    "HIGH":     "STEP_UP",
     "CRITICAL": "BLOCK",
 }
 
@@ -153,7 +161,7 @@ def assess(
         hours = max((now - last_time).total_seconds() / 3600.0, 0.01)
         dist = _haversine_km(last.latitude, last.longitude, geo.latitude, geo.longitude)
         speed = dist / hours
-        if dist > 500 and speed > 900:  # faster than a commercial jet
+        if dist > 500 and speed > 900:
             score += 30
             factors.append(
                 Factor("impossible_travel", 30,
@@ -166,7 +174,7 @@ def assess(
         score += 5
         factors.append(Factor("first_login", 5, "No prior successful login on record"))
 
-    # 6) Odd-hour heuristic (00:00–05:00 local-ish, using server UTC as proxy)
+    # 6) Odd-hour heuristic (00:00–05:00 UTC)
     if 0 <= now.hour < 5:
         score += 5
         factors.append(Factor("odd_hour", 5, f"Unusual login hour ({now.hour:02d}:00 UTC)"))

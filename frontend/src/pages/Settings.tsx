@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { FaceCapture } from "@/components/FaceCapture";
+import { FaceEnroll } from "@/components/FaceEnroll";
 import { useAuth } from "@/context/AuthContext";
 import { userApi, apiError } from "@/lib/api";
 import { performRegistration } from "@/lib/webauthn";
@@ -73,9 +73,9 @@ function MpinReset() {
 function FaceReenroll({ onDone, enabled }: { onDone: () => void; enabled: boolean }) {
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState(false);
-  async function capture(embedding: number[]) {
+  async function capture(embeddings: number[][]) {
     setBusy(true);
-    try { await userApi.reenrollFace(embedding); toast.success("Face re-enrolled"); setOpen(false); onDone(); }
+    try { await userApi.reenrollFace(embeddings); toast.success("Face re-enrolled"); setOpen(false); onDone(); }
     catch (e) { toast.error(apiError(e)); }
     finally { setBusy(false); }
   }
@@ -89,7 +89,7 @@ function FaceReenroll({ onDone, enabled }: { onDone: () => void; enabled: boolea
       </CardHeader>
       <CardContent>
         {open ? (
-          <FaceCapture onCapture={capture} label="Save New Face" busy={busy} />
+          <FaceEnroll onEnroll={capture} busy={busy} />
         ) : (
           <Button onClick={() => setOpen(true)} variant="outline"><ScanFace className="h-4 w-4" /> Re-enroll Face</Button>
         )}

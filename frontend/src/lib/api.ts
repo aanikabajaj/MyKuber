@@ -98,7 +98,7 @@ export const registerApi = {
   authSetup: (t: string) => api.post("/api/register/authenticator/setup", {}, registerApi.authHeader(t)).then((r) => r.data),
   authVerify: (t: string, code: string) => api.post("/api/register/authenticator/verify", { code }, registerApi.authHeader(t)).then((r) => r.data),
   setMpin: (t: string, mpin: string) => api.post("/api/register/mpin", { mpin }, registerApi.authHeader(t)).then((r) => r.data),
-  enrollFace: (t: string, embedding: number[]) => api.post("/api/register/second-factor/face", { embedding }, registerApi.authHeader(t)).then((r) => r.data),
+  enrollFace: (t: string, embeddings: number[][]) => api.post("/api/register/second-factor/face", { embeddings }, registerApi.authHeader(t)).then((r) => r.data),
   passkeyOptions: (t: string) => api.post("/api/register/second-factor/passkey/options", {}, registerApi.authHeader(t)).then((r) => r.data),
   passkeyVerify: (t: string, handle: string, credential: any) => api.post("/api/register/second-factor/passkey/verify", { handle, credential }, registerApi.authHeader(t)).then((r) => r.data),
   registerDevice: (t: string, device: any) => api.post("/api/register/device", device, registerApi.authHeader(t)).then((r) => r.data),
@@ -127,7 +127,7 @@ export const userApi = {
   passkeys: () => api.get("/api/user/passkeys").then((r) => r.data),
   removePasskey: (id: number) => api.delete(`/api/user/passkeys/${id}`).then((r) => r.data),
   resetMpin: (current_password: string, new_mpin: string) => api.post("/api/user/mpin/reset", { current_password, new_mpin }).then((r) => r.data),
-  reenrollFace: (embedding: number[]) => api.post("/api/user/face/re-enroll", { embedding }).then((r) => r.data),
+  reenrollFace: (embeddings: number[][]) => api.post("/api/user/face/re-enroll", { embeddings }).then((r) => r.data),
   addPasskeyOptions: () => api.post("/api/user/passkey/add/options", {}).then((r) => r.data),
   addPasskeyVerify: (handle: string, credential: any) => api.post("/api/user/passkey/add/verify", { handle, credential }).then((r) => r.data),
 };

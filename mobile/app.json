@@ -1,0 +1,64 @@
+{
+  "expo": {
+    "name": "My Kuber",
+    "slug": "iaare",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "scheme": "iaare",
+    "userInterfaceStyle": "light",
+    "backgroundColor": "#faf6f7",
+    "newArchEnabled": false,
+    "splash": {
+      "backgroundColor": "#6d0834",
+      "resizeMode": "contain",
+      "image": "./assets/kuber-logo-rect.png"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.psb.iaare",
+      "infoPlist": {
+        "NSFaceIDUsageDescription": "My Kuber uses Face ID to securely verify your identity for login and transactions.",
+        "NSCameraUsageDescription": "My Kuber uses the camera for optional face enrollment."
+      }
+    },
+    "android": {
+      "package": "com.psb.iaare",
+      "adaptiveIcon": {
+        "backgroundColor": "#970747",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "permissions": [
+        "USE_BIOMETRIC",
+        "USE_FINGERPRINT",
+        "CAMERA"
+      ],
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-secure-store",
+      "expo-localization",
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "My Kuber uses Face ID to verify your identity."
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "My Kuber uses the camera for optional face enrollment."
+        }
+      ],
+      "expo-font"
+    ],
+    "extra": {
+      "eas": {}
+    }
+  }
+}

@@ -67,6 +67,20 @@ def new_captcha() -> Tuple[str, str]:
     return captcha_id, _render(text)
 
 
+def new_math_captcha() -> Tuple[str, str]:
+    """A very easy arithmetic captcha (e.g. '3 + 4'). Returns (id, question)."""
+    _prune()
+    a = random.randint(1, 9)
+    b = random.randint(1, 9)
+    if random.random() < 0.35 and a >= b:
+        answer, question = a - b, f"{a} - {b}"
+    else:
+        answer, question = a + b, f"{a} + {b}"
+    captcha_id = secrets.token_hex(12)
+    _store[captcha_id] = (str(answer), time.time())
+    return captcha_id, question
+
+
 def verify(captcha_id: str, answer: str) -> bool:
     # DEMO_MODE-only bypass for automated tests / scripted demos. Disabled when
     # DEMO_MODE is false. The real frontend always solves a rendered captcha.

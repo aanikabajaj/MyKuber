@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, Integer, String
+from sqlalchemy import Boolean, DateTime, Float, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -42,21 +42,39 @@ class User(Base):
     totp_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     face_embedding_enc: Mapped[Optional[str]] = mapped_column(String(8192), nullable=True)
     face_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
-    # 'face' or 'passkey' — the strong factor the user chose at registration
+    # 'face' | 'passkey' | 'biometric' — strong factor chosen at registration
     second_factor: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+
+    # --- SIM binding ---
+    # SHA-256 hex of (carrier_name + mcc + mnc + country_iso) from the device SIM.
+    # Only sent as a hash — raw SIM data never leaves the device.
+    # Null when no SIM was enrolled (iOS, Wi-Fi-only tablet) — sim_check is
+    # silently skipped during login for those accounts.
+    sim_fingerprint: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    sim_enrolled: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # --- Security preferences (user-controlled) ---
+    face_login_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    face_txn_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    txn_face_threshold: Mapped[int] = mapped_column(Integer, default=10000)
+    preferred_language: Mapped[str] = mapped_column(String(8), default="en")
+
+    # --- Banking (prototype account) ---
+    account_number: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, index=True)
+    balance: Mapped[float] = mapped_column(Float, default=100000.0)
 
     # --- Verification flags ---
     email_verified: Mapped[bool] = mapped_column(Boolean, default=False)
     mobile_verified: Mapped[bool] = mapped_column(Boolean, default=False)
 
     # --- Status ---
-    # registration_stage: details -> mobile -> email -> authenticator -> mpin -> second_factor -> complete
+    # registration_stage:
+    #   details → mobile → email → sim_verify → mpin → second_factor → complete
     registration_stage: Mapped[str] = mapped_column(String(30), default="details")
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     is_blocked: Mapped[bool] = mapped_column(Boolean, default=False)
-    # Seeded demo accounts: in DEMO_MODE their biometric step is auto-passed so
-    # they can be logged in during a presentation without the enrolled face.
+    # Seeded demo accounts: biometric + sim_check steps auto-pass during demos.
     is_demo: Mapped[bool] = mapped_column(Boolean, default=False)
     failed_login_count: Mapped[int] = mapped_column(Integer, default=0)
 

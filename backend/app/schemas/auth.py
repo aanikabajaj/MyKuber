@@ -32,7 +32,6 @@ class SimulatedContext(BaseModel):
     is_vpn: Optional[bool] = None
     failed_attempts: Optional[int] = None
     new_device: Optional[bool] = None
-    # Explicit demo override (SAFE|MEDIUM|HIGH|CRITICAL) for reliable stage demos.
     force_band: Optional[str] = None
 
 
@@ -92,7 +91,7 @@ class OtpSendOut(BaseModel):
     channel: str
     destination_masked: str
     provider: str
-    dev_code: Optional[str] = None  # present only in DEMO_MODE
+    dev_code: Optional[str] = None   # present only in DEMO_MODE
     message: str
 
 
@@ -111,7 +110,16 @@ class MpinIn(BaseModel):
 
 
 class FaceEnrollIn(BaseModel):
-    embedding: List[float] = Field(..., min_length=8)
+    embeddings: List[List[float]] = Field(..., min_length=1)
+
+
+class FaceImagesEnrollIn(BaseModel):
+    images: List[str] = Field(..., min_length=1)
+
+
+class StepFaceImageIn(BaseModel):
+    session_id: str
+    image: str
 
 
 class PasskeyVerifyIn(BaseModel):
@@ -122,6 +130,42 @@ class PasskeyVerifyIn(BaseModel):
 class StageOut(BaseModel):
     stage: str
     complete: bool
+
+
+# --------------------------------------------------------------------------- #
+#  SIM verification schemas
+# --------------------------------------------------------------------------- #
+class SimEnrollIn(BaseModel):
+    """SHA-256 hex fingerprint of the device's SIM hardware fields."""
+    sim_fingerprint: str = Field(
+        ...,
+        min_length=64,
+        max_length=64,
+        pattern=r"^[0-9a-fA-F]{64}$",
+        description="SHA-256 hex of (carrier_name + mcc + mnc + country_iso)",
+    )
+
+
+class SimVerifyConfirmIn(OtpVerifyIn):
+    """OTP code + optional SIM fingerprint sent together at registration."""
+    sim_fingerprint: Optional[str] = Field(
+        default=None,
+        min_length=64,
+        max_length=64,
+        pattern=r"^[0-9a-fA-F]{64}$",
+    )
+
+
+class StepSimVerifyIn(BaseModel):
+    """SIM fingerprint submitted during the sim_check login step."""
+    session_id: str
+    sim_fingerprint: str = Field(
+        ...,
+        min_length=64,
+        max_length=64,
+        pattern=r"^[0-9a-fA-F]{64}$",
+        description="SHA-256 hex of the SIM hardware fields on the current device",
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -160,7 +204,7 @@ class LoginSessionOut(BaseModel):
     second_factor: Optional[str]
     user_display: Optional[str] = None
     message: Optional[str] = None
-    tokens: Optional[dict] = None  # populated on approval
+    tokens: Optional[dict] = None
 
 
 class StepMpinIn(BaseModel):
@@ -206,4 +250,4 @@ class RefreshIn(BaseModel):
 
 class CaptchaOut(BaseModel):
     captcha_id: str
-    image: str  # data URI
+    image: str

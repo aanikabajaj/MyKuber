@@ -56,7 +56,7 @@ def seed_all() -> None:
             return
 
         created_users = []
-        for spec in DEMO_USERS:
+        for idx, spec in enumerate(DEMO_USERS):
             user = User(
                 first_name=spec["first"], last_name=spec["last"],
                 email=spec["email"], mobile=spec["mobile"],
@@ -67,6 +67,8 @@ def seed_all() -> None:
                 face_embedding_enc=None, face_enabled=True, second_factor="face",
                 email_verified=True, mobile_verified=True,
                 registration_stage="complete",
+                account_number=f"PSB{50100000000 + idx}",
+                balance=[520000.0, 148500.0, 92750.0][idx % 3],
                 is_admin=spec["is_admin"], is_demo=True, is_active=True,
             )
             from app.core.encryption import encrypt_json
@@ -76,6 +78,23 @@ def seed_all() -> None:
         db.commit()
         for u in created_users:
             db.refresh(u)
+
+        # Sample transaction history for the demo accounts
+        from app.models.transaction import Transaction as _Txn
+        _payees = [("Amazon Pay", "9012xxxx3311", 2499.0), ("Rent - Landlord", "5566xxxx0192", 18000.0),
+                   ("Ravi Kumar", "3021xxxx7788", 5000.0), ("Electricity Board", "1122xxxx9900", 1340.0),
+                   ("Mutual Fund SIP", "8899xxxx1200", 10000.0)]
+        for u in created_users:
+            for pi, (pname, pacc, pamt) in enumerate(_payees):
+                db.add(_Txn(
+                    user_id=u.id, beneficiary_name=pname, beneficiary_account=pacc,
+                    amount=pamt, note="Demo transaction", status="completed",
+                    step_up_required=pamt >= u.txn_face_threshold,
+                    step_up_factor="face" if pamt >= u.txn_face_threshold else None,
+                    reference=f"TXN{u.id:02d}{pi:02d}{random.randint(1000,9999)}",
+                    balance_after=u.balance, completed_at=datetime.now(timezone.utc),
+                ))
+        db.commit()
 
         # A trusted device for the admin (so same-browser demo logins read SAFE)
         admin = created_users[0]

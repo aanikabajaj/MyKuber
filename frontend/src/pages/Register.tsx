@@ -16,7 +16,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { FaceCapture } from "@/components/FaceCapture";
+import { FaceEnroll } from "@/components/FaceEnroll";
 import { registerApi, apiError } from "@/lib/api";
 import { getDeviceInfo } from "@/lib/fingerprint";
 import { isWebAuthnSupported, performRegistration } from "@/lib/webauthn";
@@ -366,8 +366,8 @@ function AuthenticatorStep({ token, onDone }: { token: string; onDone: () => voi
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex items-center gap-2"><QrCode className="h-5 w-5 text-primary" /> Link Google Authenticator</CardTitle>
-        <CardDescription>Scan the QR with Google Authenticator (or any TOTP app), then enter the 6-digit code.</CardDescription>
+        <CardTitle className="flex items-center gap-2"><QrCode className="h-5 w-5 text-primary" /> Link your Authenticator</CardTitle>
+        <CardDescription>Scan the QR with any authenticator app (Authy, Microsoft Authenticator, etc.), then enter the 6-digit code.</CardDescription>
       </CardHeader>
       <CardContent className="grid gap-6 sm:grid-cols-2">
         <div className="flex flex-col items-center gap-3">
@@ -461,10 +461,10 @@ function SecondFactorStep({ token, onDone }: { token: string; onDone: () => void
     }
   }
 
-  async function enrollFace(embedding: number[]) {
+  async function enrollFace(embeddings: number[][]) {
     setBusy(true);
     try {
-      await registerApi.enrollFace(token, embedding);
+      await registerApi.enrollFace(token, embeddings);
       await finishDevice();
       toast.success("Face enrolled!");
       onDone();
@@ -530,7 +530,7 @@ function SecondFactorStep({ token, onDone }: { token: string; onDone: () => void
       </CardHeader>
       <CardContent className="space-y-4">
         {choice === "face" ? (
-          <FaceCapture onCapture={enrollFace} label="Enroll Face" busy={busy} />
+          <FaceEnroll onEnroll={enrollFace} busy={busy} />
         ) : (
           <Button onClick={enrollPasskey} loading={busy} size="lg">
             <Fingerprint className="h-4 w-4" /> Create Passkey

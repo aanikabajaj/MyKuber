@@ -24,11 +24,25 @@ class UserOut(BaseModel):
     face_enabled: bool
     email_verified: bool
     mobile_verified: bool
+    # security preferences + banking
+    face_login_enabled: bool = True
+    face_txn_enabled: bool = True
+    txn_face_threshold: int = 10000
+    preferred_language: str = "en"
+    account_number: Optional[str] = None
+    balance: float = 0.0
     created_at: Optional[datetime] = None
     last_login_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
+
+
+class SecurityPrefsIn(BaseModel):
+    face_login_enabled: Optional[bool] = None
+    face_txn_enabled: Optional[bool] = None
+    txn_face_threshold: Optional[int] = None
+    preferred_language: Optional[str] = None
 
 
 class DeviceOut(BaseModel):
@@ -78,4 +92,8 @@ class MpinResetIn(BaseModel):
 
 
 class FaceReenrollIn(BaseModel):
-    embedding: List[float]
+    embeddings: List[List[float]]
+
+
+class FaceImagesReenrollIn(BaseModel):
+    images: List[str]
