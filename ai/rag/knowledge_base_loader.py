@@ -103,18 +103,14 @@ def _build_payload(
 
 def ingest_knowledge_base(force: bool = False, batch_size: int = 32) -> None:
     """Ingest all knowledge_base documents into Qdrant."""
-    from FlagEmbedding import BGEM3FlagModel  # type: ignore
     from qdrant_client import QdrantClient
     from qdrant_client.models import PointStruct
     from sqlalchemy import create_engine, text
     from sqlalchemy.orm import sessionmaker
+    from sentence_transformers import SentenceTransformer  # type: ignore
 
-    print("── Loading BGE-M3 model …")
-    try:
-        model = BGEM3FlagModel("BAAI/bge-m3", use_fp16=True)
-    except Exception:
-        print("  fp16 unavailable, falling back to fp32")
-        model = BGEM3FlagModel("BAAI/bge-m3", use_fp16=False)
+    print("── Loading all-MiniLM-L6-v2 model …")
+    model = SentenceTransformer("all-MiniLM-L6-v2")
 
     print("── Connecting to Qdrant …")
     qdrant = QdrantClient(url=settings.QDRANT_URL, api_key=settings.QDRANT_API_KEY or None)
@@ -198,7 +194,7 @@ def ingest_knowledge_base(force: bool = False, batch_size: int = 32) -> None:
         for batch_start in range(0, len(chunks_text), batch_size):
             batch = chunks_text[batch_start: batch_start + batch_size]
             try:
-                embeddings = model.encode(batch, batch_size=len(batch))["dense_vecs"]
+                embeddings = model.encode(batch, convert_to_numpy=True)
             except Exception as exc:
                 print(f"    ERROR embedding batch {batch_start}: {exc}")
                 continue

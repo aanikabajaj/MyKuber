@@ -51,12 +51,9 @@ def _get_qdrant():
     return QdrantClient(url=settings.QDRANT_URL, api_key=settings.QDRANT_API_KEY or None)
 
 
-def _get_bge_model():
-    from FlagEmbedding import BGEM3FlagModel  # type: ignore
-    try:
-        return BGEM3FlagModel("BAAI/bge-m3", use_fp16=True)
-    except Exception:
-        return BGEM3FlagModel("BAAI/bge-m3", use_fp16=False)
+def _get_embedding_model():
+    from sentence_transformers import SentenceTransformer  # type: ignore
+    return SentenceTransformer("all-MiniLM-L6-v2")
 
 
 def _upsert_chunks(
@@ -78,7 +75,7 @@ def _upsert_chunks(
 
     for batch_start in range(0, len(chunks_text), batch_size):
         batch = chunks_text[batch_start: batch_start + batch_size]
-        embeddings = model.encode(batch, batch_size=len(batch))["dense_vecs"]
+        embeddings = model.encode(batch, convert_to_numpy=True)
 
         for local_i, (chunk_str, emb) in enumerate(zip(batch, embeddings)):
             global_i = batch_start + local_i
@@ -146,7 +143,7 @@ def ingest_document(self, bucket: str, object_key: str, collection: str) -> dict
     cfg = SMALL_CHUNK if len(text) < 20_000 else select_config("circular", 40)
     chunks = chunk_text(text, cfg)
 
-    model  = _get_bge_model()
+    model  = _get_embedding_model()
     qdrant = _get_qdrant()
     db     = _get_db_session()
 
@@ -216,7 +213,7 @@ def ingest_local_file(
     if not chunks:
         return {"error": "No text extracted", "file": fname}
 
-    model  = _get_bge_model()
+    model  = _get_embedding_model()
     qdrant = _get_qdrant()
     db     = _get_db_session()
 
