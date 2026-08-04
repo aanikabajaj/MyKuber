@@ -23,9 +23,10 @@ async def health_check():
 
     # Qdrant
     try:
+        headers = {"api-key": settings.QDRANT_API_KEY} if settings.QDRANT_API_KEY else {}
         async with httpx.AsyncClient() as client:
             r = await asyncio.wait_for(
-                client.get(f"{settings.QDRANT_URL}/healthz"), timeout=1.0
+                client.get(f"{settings.QDRANT_URL}/healthz", headers=headers), timeout=1.0
             )
             status["qdrant"] = "connected" if r.status_code == 200 else "unavailable"
     except Exception:
