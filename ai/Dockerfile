@@ -16,4 +16,7 @@ ENV PYTHONPATH=/app:/app/backend
 EXPOSE 8001
 
 # Respect the platform-provided $PORT (Render/Railway/Fly), default 8001 locally.
-CMD ["sh", "-c", "uvicorn ai.main:app --host 0.0.0.0 --port ${PORT:-8001} --workers 2"]
+# Single worker: this process eagerly loads torch/langgraph/cvxpy at startup
+# (see main.py's lifespan warmup) — a second worker would load all of that
+# a second time, roughly doubling memory for no real benefit at this scale.
+CMD ["sh", "-c", "uvicorn ai.main:app --host 0.0.0.0 --port ${PORT:-8001} --workers 1"]
