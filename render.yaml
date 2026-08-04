@@ -1,12 +1,11 @@
 databases:
+  # Render only allows one free-tier database per account, so the AI
+  # gateway's tables (all prefixed ai_*, no collisions with the backend's)
+  # live in this same database instead of a separate one.
   - name: iaare-db
     plan: free
     databaseName: iaare
     user: iaare
-  - name: iaare-ai-db
-    plan: free
-    databaseName: ai_db
-    user: ai_user
 
 services:
   # --- Core banking backend (auth, transactions, security prefs) ---
@@ -46,9 +45,10 @@ services:
     dockerContext: ./frontend
 
 # NOTE: The AI gateway now deploys to Google Cloud Run (not Render) to
-# avoid Render's paid tiers for the RAM it needs. It still uses the
-# iaare-ai-db Postgres above (via its *external* connection string — grab
-# that from the iaare-ai-db dashboard page after this blueprint applies),
-# plus external Qdrant Cloud (vector store) and Upstash (Redis). MinIO and
-# a dedicated Celery worker were dropped entirely — not needed for the
-# bundled knowledge_base ingestion path.
+# avoid Render's paid tiers for the RAM it needs. It uses this SAME
+# iaare-db Postgres for both IAARE_DATABASE_URL and AI_DATABASE_URL (via
+# its *external* connection string — grab that from the iaare-db
+# dashboard page after this blueprint applies), plus external Qdrant
+# Cloud (vector store) and Upstash (Redis). MinIO and a dedicated Celery
+# worker were dropped entirely — not needed for the bundled
+# knowledge_base ingestion path.
