@@ -42,7 +42,7 @@ def get_qdrant_client():
     global _qdrant_client
     if _qdrant_client is None:
         from qdrant_client import AsyncQdrantClient  # type: ignore
-        _qdrant_client = AsyncQdrantClient(url=settings.QDRANT_URL)
+        _qdrant_client = AsyncQdrantClient(url=settings.QDRANT_URL, api_key=settings.QDRANT_API_KEY or None)
     return _qdrant_client
 
 

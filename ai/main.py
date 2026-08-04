@@ -26,7 +26,7 @@ async def lifespan(app: FastAPI):
     try:
         from qdrant_client import QdrantClient
         from ai.rag.collections import ensure_collections
-        qc = QdrantClient(url=settings.QDRANT_URL)
+        qc = QdrantClient(url=settings.QDRANT_URL, api_key=settings.QDRANT_API_KEY or None)
         ensure_collections(qc)
     except Exception:
         pass  # non-fatal on startup

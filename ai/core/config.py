@@ -30,6 +30,8 @@ class AISettings(BaseSettings):
 
     # --- Qdrant vector store ---
     QDRANT_URL: str = "http://localhost:6333"
+    # Required for Qdrant Cloud; leave empty for a local/unauthenticated instance.
+    QDRANT_API_KEY: str = ""
 
     # --- vLLM (OpenAI-compatible inference server) ---
     # Works with self-hosted vLLM OR any hosted OpenAI-compatible endpoint

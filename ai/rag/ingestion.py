@@ -48,7 +48,7 @@ def _get_db_session():
 
 def _get_qdrant():
     from qdrant_client import QdrantClient  # type: ignore
-    return QdrantClient(url=settings.QDRANT_URL)
+    return QdrantClient(url=settings.QDRANT_URL, api_key=settings.QDRANT_API_KEY or None)
 
 
 def _get_bge_model():

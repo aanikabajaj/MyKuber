@@ -117,7 +117,7 @@ def ingest_knowledge_base(force: bool = False, batch_size: int = 32) -> None:
         model = BGEM3FlagModel("BAAI/bge-m3", use_fp16=False)
 
     print("── Connecting to Qdrant …")
-    qdrant = QdrantClient(url=settings.QDRANT_URL)
+    qdrant = QdrantClient(url=settings.QDRANT_URL, api_key=settings.QDRANT_API_KEY or None)
     ensure_collections(qdrant)
 
     print("── Connecting to AI_PostgreSQL …")

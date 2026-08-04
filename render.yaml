@@ -18,8 +18,8 @@ services:
     dockerContext: ./backend
     healthCheckPath: /api/health
     envVars:
-      # Shared with the AI gateway/worker below so JWTs issued here verify
-      # there too — must stay identical across all three services.
+      # Shared with the AI gateway (deployed separately on Cloud Run) so
+      # JWTs issued here verify there too — must stay identical.
       - key: IAARE_SECRET_KEY
         value: "dc953a897c2aa168bb783189c8be73771bec5be0437f4a3bb68061df0278fc0b"
       - key: IAARE_DEMO_MODE
@@ -37,129 +37,6 @@ services:
       - key: IAARE_CORS_ORIGINS
         value: "https://iaare-frontend.onrender.com,http://localhost:5173,http://127.0.0.1:5173,http://localhost:8081,http://127.0.0.1:8081,http://localhost:19006,http://127.0.0.1:19006,http://10.0.2.2:8000"
 
-  # --- Redis: Celery broker/result backend + AI response caching ---
-  - type: redis
-    name: iaare-redis
-    plan: free
-    ipAllowList: []
-
-  # --- Qdrant: vector store for RAG document retrieval ---
-  - type: pserv
-    name: iaare-qdrant
-    runtime: image
-    image:
-      url: docker.io/qdrant/qdrant:v1.9.0
-    plan: starter
-    disk:
-      name: qdrant-data
-      mountPath: /qdrant/storage
-      sizeGB: 1
-
-  # --- MinIO: object storage for the ingested RAG source documents ---
-  - type: pserv
-    name: iaare-minio
-    runtime: image
-    image:
-      url: docker.io/minio/minio:latest
-    dockerCommand: "server /data --console-address :9001"
-    plan: starter
-    disk:
-      name: minio-data
-      mountPath: /data
-      sizeGB: 2
-    envVars:
-      - key: MINIO_ROOT_USER
-        value: "minioadmin"
-      - key: MINIO_ROOT_PASSWORD
-        value: "1396da71e114be4e431a37677baa46b8"
-
-  # --- Celery worker: background RAG document ingestion ---
-  - type: worker
-    name: iaare-celery-worker
-    runtime: docker
-    dockerfilePath: ./ai/Dockerfile
-    dockerContext: .
-    dockerCommand: "celery -A ai.rag.ingestion.celery_app worker --loglevel=info"
-    plan: starter
-    envVars:
-      - key: IAARE_SECRET_KEY
-        value: "dc953a897c2aa168bb783189c8be73771bec5be0437f4a3bb68061df0278fc0b"
-      - key: IAARE_DATABASE_URL
-        fromDatabase:
-          name: iaare-db
-          property: connectionString
-      - key: AI_DATABASE_URL
-        fromDatabase:
-          name: iaare-ai-db
-          property: connectionString
-      - key: REDIS_URL
-        fromService:
-          type: redis
-          name: iaare-redis
-          property: connectionString
-      - key: CELERY_BROKER_URL
-        fromService:
-          type: redis
-          name: iaare-redis
-          property: connectionString
-      - key: CELERY_RESULT_BACKEND
-        fromService:
-          type: redis
-          name: iaare-redis
-          property: connectionString
-      - key: QDRANT_URL
-        value: "http://iaare-qdrant:6333"
-      - key: MINIO_ENDPOINT
-        value: "iaare-minio:9000"
-      - key: MINIO_ACCESS_KEY
-        value: "minioadmin"
-      - key: MINIO_SECRET_KEY
-        value: "1396da71e114be4e431a37677baa46b8"
-      - key: MINIO_SECURE
-        value: "false"
-
-  # --- AI gateway: chat assistant, portfolio tools, RAG ---
-  - type: web
-    name: iaare-ai-gateway
-    runtime: docker
-    dockerfilePath: ./ai/Dockerfile
-    dockerContext: .
-    healthCheckPath: /ai/health
-    plan: standard
-    envVars:
-      - key: IAARE_SECRET_KEY
-        value: "dc953a897c2aa168bb783189c8be73771bec5be0437f4a3bb68061df0278fc0b"
-      - key: IAARE_DATABASE_URL
-        fromDatabase:
-          name: iaare-db
-          property: connectionString
-      - key: AI_DATABASE_URL
-        fromDatabase:
-          name: iaare-ai-db
-          property: connectionString
-      - key: REDIS_URL
-        fromService:
-          type: redis
-          name: iaare-redis
-          property: connectionString
-      - key: QDRANT_URL
-        value: "http://iaare-qdrant:6333"
-      - key: MINIO_ENDPOINT
-        value: "iaare-minio:9000"
-      - key: MINIO_ACCESS_KEY
-        value: "minioadmin"
-      - key: MINIO_SECRET_KEY
-        value: "1396da71e114be4e431a37677baa46b8"
-      - key: MINIO_SECURE
-        value: "false"
-      # LLM backend — set to your hosted OpenAI-compatible provider.
-      - key: VLLM_BASE_URL
-        sync: false
-      - key: VLLM_API_KEY
-        sync: false
-      - key: VLLM_MODEL
-        sync: false
-
   # --- Frontend: Vite/React web app, nginx-served, proxies /api and /ai ---
   - type: web
     name: iaare-frontend
@@ -167,3 +44,11 @@ services:
     plan: free
     dockerfilePath: ./frontend/Dockerfile
     dockerContext: ./frontend
+
+# NOTE: The AI gateway now deploys to Google Cloud Run (not Render) to
+# avoid Render's paid tiers for the RAM it needs. It still uses the
+# iaare-ai-db Postgres above (via its *external* connection string — grab
+# that from the iaare-ai-db dashboard page after this blueprint applies),
+# plus external Qdrant Cloud (vector store) and Upstash (Redis). MinIO and
+# a dedicated Celery worker were dropped entirely — not needed for the
+# bundled knowledge_base ingestion path.
