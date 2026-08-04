@@ -27,22 +27,15 @@ services:
         fromDatabase:
           name: iaare-db
           property: connectionString
-      # WebAuthn ceremonies run in the browser against the *frontend's*
-      # origin, not the backend's — these must match iaare-frontend's URL.
+      # No web frontend is deployed — WebAuthn/passkey ceremonies only run
+      # from a browser page anyway (the mobile app uses on-device
+      # biometrics instead), so these are left at local-dev defaults.
       - key: IAARE_RP_ID
-        value: "iaare-frontend.onrender.com"
+        value: "localhost"
       - key: IAARE_EXPECTED_ORIGIN
-        value: "https://iaare-frontend.onrender.com"
+        value: "http://localhost:5173"
       - key: IAARE_CORS_ORIGINS
-        value: "https://iaare-frontend.onrender.com,http://localhost:5173,http://127.0.0.1:5173,http://localhost:8081,http://127.0.0.1:8081,http://localhost:19006,http://127.0.0.1:19006,http://10.0.2.2:8000"
-
-  # --- Frontend: Vite/React web app, nginx-served, proxies /api and /ai ---
-  - type: web
-    name: iaare-frontend
-    runtime: docker
-    plan: free
-    dockerfilePath: ./frontend/Dockerfile
-    dockerContext: ./frontend
+        value: "http://localhost:5173,http://127.0.0.1:5173,http://localhost:8081,http://127.0.0.1:8081,http://localhost:19006,http://127.0.0.1:19006,http://10.0.2.2:8000"
 
   # --- AI gateway: chat assistant, portfolio tools, RAG ---
   # Uses all-MiniLM-L6-v2 (~90MB) instead of BGE-M3 (~2GB) for RAG
